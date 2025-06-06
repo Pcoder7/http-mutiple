@@ -366,7 +366,7 @@ jobs:
         if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
         uses: benc-uk/workflow-dispatch@v1
         with:
-          workflow: resolve.yml 
+          workflow: httpx_receive.yml
           repo: ${{ env.ACCOUNT2_REPO_OWNER }}/${{ env.ACCOUNT2_REPO_NAME }}
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload.outputs.json_string }}
