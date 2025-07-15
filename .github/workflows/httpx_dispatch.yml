@@ -66,9 +66,11 @@ jobs:
       - name: Download Subdomain Artifacts from Source Repo
         uses: actions/download-artifact@v4
         with:
-          github_token: ${{ secrets.PAT_TOKEN }}
-          run_id: ${{ github.event.client_payload.run_id  }}
-          repository: ${{ github.event.client_payload.results_repo }}
+
+          github-token: ${{ secrets.PAT_TOKEN }}
+          # This tells the action to get artifacts from the specific workflow run that triggered this one.
+          run-id: ${{ github.event.client_payload.run_id  }}
+          repository:  ${{ github.event.client_payload.results_repo }}
           pattern: puredns-final-sorted-*
           path: downloaded-artifacts
 
