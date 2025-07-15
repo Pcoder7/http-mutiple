@@ -70,6 +70,47 @@ jobs:
           run_id: ${{ github.event.client_payload.run_id }}
           pattern: puredns-final-sorted-*
           path: downloaded-artifacts
+
+      - name: DEBUG - Show Downloaded Artifact Structure
+        if: always() # This ensures the step runs even if the download step had warnings
+        shell: bash
+        run: |
+          echo "======================================================================"
+          echo "               DEBUGGING DOWNLOADED ARTIFACTS                         "
+          echo "======================================================================"
+          
+          ARTIFACTS_DIR="downloaded-artifacts"
+
+          echo "INFO: Checking if the artifacts directory '$ARTIFACTS_DIR' exists..."
+          if [ ! -d "$ARTIFACTS_DIR" ]; then
+            echo "ERROR: The directory '$ARTIFACTS_DIR' was NOT found."
+            echo "This likely means the artifact download failed or the artifact was empty."
+            exit 1 # Exit with an error to make the problem obvious
+          fi
+
+          echo ""
+          echo "--- Option A: Recursive Listing (Comprehensive & Always Available) ---"
+          echo "This shows all downloaded files and their directories."
+          ls -R "$ARTIFACTS_DIR"
+
+          echo ""
+          echo "--- Option B: Tree View (More Visual, if 'tree' is installed) ---"
+          # 'tree' gives a nicer visual output but may not be installed.
+          # We check for it first to avoid errors.
+          if command -v tree &> /dev/null; then
+            echo "The 'tree' command is available. Displaying visual structure:"
+            tree "$ARTIFACTS_DIR"
+          else
+            echo "The 'tree' command is not available in this container. Skipping tree view."
+          fi
+          
+          echo ""
+          echo "--- Verifying Target Files ---"
+          echo "This shows the exact 'subdomains_ports.txt' files that will be processed by the next step:"
+          find "$ARTIFACTS_DIR" -type f -name "subdomains_ports.txt" -print
+          
+          echo "======================================================================"
+
           
       - name: Build Full Matrix & Create Chunks
         id: build_full_matrix
