@@ -61,12 +61,34 @@ jobs:
             split --version || echo "DEBUG: Could not get split version."
           fi
           echo "-----------------------------------------------------"
-
+      
+      - name: Download Subdomain Artifacts from Source Repo
+        uses: actions/download-artifact@v4
+        with:
+          github_token: ${{ secrets.PAT_TOKEN }}
+          repo: ${{ github.event.client_payload.results_repo }}
+          run_id: ${{ github.event.client_payload.run_id }}
+          pattern: puredns-final-sorted-*
+          path: downloaded-artifacts
+          
       - name: Build Full Matrix & Create Chunks
         id: build_full_matrix
         shell: bash
         run: |
           # --- Start of Script ---
+          ARTIFACTS_DIR="downloaded-artifacts"
+          COMBINED_TARGET_FILE="subdomains.txt" 
+
+          echo "INFO: Preparing input from downloaded artifacts..."
+          if [ ! -d "$ARTIFACTS_DIR" ] || [ -z "$(ls -A $ARTIFACTS_DIR)" ]; then
+             echo "WARNING: Artifacts directory '$ARTIFACTS_DIR' is missing or empty..."
+          else
+             echo "INFO: Finding all 'subdomains_ports.txt' files and combining them into '$COMBINED_TARGET_FILE'..."
+             find "$ARTIFACTS_DIR" -type f -name "subdomains_ports.txt" -exec cat {} + > "$COMBINED_TARGET_FILE"
+
+          fi
+           echo "--- Pre-processing complete. Starting original script logic. ---"
+
           JSON_MATRIX='[]' # Initialize as an empty JSON array string
           echo "INFO: Initializing JSON_MATRIX as: '$JSON_MATRIX'"
 
