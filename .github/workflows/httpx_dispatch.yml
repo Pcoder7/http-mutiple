@@ -517,7 +517,15 @@ jobs:
           echo "-> Running httpx (100 threads) against '$CHUNK_FILE_PATH'..."
           httpx \
             -l "$CHUNK_FILE_PATH" \
-            -threads 200 \
+            -sc \
+            -cl \
+            -vhost \
+            -websocket \
+            -fhr \
+            -threads 100 \
+            -timeout 20 \
+            -delay 100ms \
+            -random-agent \
             -silent \
             -no-color \
             -o "$HTTPX_OUT"
