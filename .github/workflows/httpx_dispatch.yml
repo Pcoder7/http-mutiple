@@ -534,16 +534,7 @@ jobs:
             mkdir -p "$OUTPUT_ROOT/$parent"
             
             # --- CHANGE 3: Append (>>) to the final file instead of overwriting (>) ---
-            awk -v b="$parent" -F'/' '
-              {
-                host = $3
-                sub(/:.*/, "", host)
-                if (host == b || host ~ ("\\." b "$")) {
-                  print $0
-                }
-              }
-            ' "$HTTPX_OUT" \
-              >> "$OUTPUT_ROOT/$parent/httpx_result.txt"
+            grep -iE "(^|https?:\/\/|[^a-zA-Z0-9-])${parent}" "$HTTPX_OUT" --color=never >> "$OUTPUT_ROOT/$parent/httpx_result.txt"
               
           done < "$PARENT_DOMAINS_FILE"
           
