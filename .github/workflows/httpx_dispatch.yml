@@ -516,7 +516,7 @@ jobs:
           httpx \
             -l "$CHUNK_FILE_PATH" \
             -sc -cl -vhost -websocket -fhr \
-            -threads 50 -timeout 30 -delay 200ms \
+            -retries 2 -timeout 30 -delay 200ms \
             -random-agent -silent -no-color \
             -o "$HTTPX_OUT"
             
