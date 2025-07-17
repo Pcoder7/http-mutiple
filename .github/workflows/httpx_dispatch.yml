@@ -493,78 +493,61 @@ jobs:
         shell: bash
         run: |
           DOMAIN=${{ matrix.pair.domain }}
-          CHUNK_FILE_PATH=${{ matrix.pair.chunk }}   # e.g. "chunks/example.com/chunk_001"
-          echo "Processing domain '$DOMAIN' with chunk '$CHUNK_FILE_PATH'..."
+          CHUNK_FILE_PATH=${{ matrix.pair.chunk }}
+
+          # --- CHANGE 1: Create a unique identifier for this job's files ---
+          SAFE_CHUNK_ID=$(echo "${{ matrix.pair.chunk }}" | tr '/' '_')
+          
+          echo "Processing domain '$DOMAIN' with chunk '$CHUNK_FILE_PATH' (ID: $SAFE_CHUNK_ID)..."
 
           if [ ! -f "$CHUNK_FILE_PATH" ]; then
             echo "ERROR: Chunk file '$CHUNK_FILE_PATH' not found!"
             exit 1
           fi
 
-          # ───────────────────────────────────────────────────────────
-          # Step A: pre-dsieve on the raw subdomain chunk (no httpx yet)
-          # ───────────────────────────────────────────────────────────
-          echo "-> Generating parent_domains.txt from raw subdomains..."
-          dsieve -if "$CHUNK_FILE_PATH" -f 2 | sort -u > parent_domains.txt
-
-          echo "  Parents in this chunk: $(wc -l < parent_domains.txt)"
-          head -n 5 parent_domains.txt || true
-
-          # ───────────────────────────────────────────────────────────
-          # Step B: Probe all subdomains in this chunk with httpx
-          # ───────────────────────────────────────────────────────────
-          HTTPX_OUT="httpx_output.txt"
-          echo "-> Running httpx (100 threads) against '$CHUNK_FILE_PATH'..."
+          # --- CHANGE 2a: Write to a unique parent domains file ---
+          PARENT_DOMAINS_FILE="parent_domains_${SAFE_CHUNK_ID}.txt"
+          echo "-> Generating $PARENT_DOMAINS_FILE from raw subdomains..."
+          dsieve -if "$CHUNK_FILE_PATH" -f 2 | sort -u > "$PARENT_DOMAINS_FILE"
+          
+          # --- CHANGE 2b: Write httpx output to a unique file ---
+          HTTPX_OUT="httpx_output_${SAFE_CHUNK_ID}.txt"
+          echo "-> Running httpx against '$CHUNK_FILE_PATH'..."
           httpx \
             -l "$CHUNK_FILE_PATH" \
-            -sc \
-            -cl \
-            -vhost \
-            -websocket \
-            -fhr \
-            -threads 100 \
-            -timeout 20 \
-            -delay 100ms \
-            -random-agent \
-            -silent \
-            -no-color \
+            -sc -cl -vhost -websocket -fhr \
+            -threads 100 -timeout 20 -delay 100ms \
+            -random-agent -silent -no-color \
             -o "$HTTPX_OUT"
-
+            
           if [ ! -s "$HTTPX_OUT" ]; then
             echo "No live URLs found in this chunk. Exiting early."
+            mkdir -p results
             exit 0
           fi
-
-          # ───────────────────────────────────────────────────────────
-          # Step C: Extract host:port from each live URL (for debugging only)
-          # ───────────────────────────────────────────────────────────
-          cut -d'/' -f3 "$HTTPX_OUT" > hosts_with_port.txt
-          echo "  Sample hosts_with_port.txt:"
-          head -n 5 hosts_with_port.txt || true
-
-          # ───────────────────────────────────────────────────────────
-          # Step D: For each parent domain, filter the matching URLs
-          # ───────────────────────────────────────────────────────────
+          
           OUTPUT_ROOT="results"
           mkdir -p "$OUTPUT_ROOT"
-
+          
+          # Read from the unique parent domains file
           while read -r parent; do
             mkdir -p "$OUTPUT_ROOT/$parent"
+            
+            # --- CHANGE 3: Append (>>) to the final file instead of overwriting (>) ---
             awk -v b="$parent" -F'/' '
               {
                 host = $3
-                sub(/:.*/, "", host)      # strip any :port suffix
+                sub(/:.*/, "", host)
                 if (host == b || host ~ ("\\." b "$")) {
                   print $0
                 }
               }
             ' "$HTTPX_OUT" \
-              > "$OUTPUT_ROOT/$parent/httpx_result.txt"
-          done < parent_domains.txt
-
-          echo "-> Split complete for domain '$DOMAIN'."
-          # Always create a results/ directory (so upload-artifact never complains about “no files”)
-          mkdir -p results
+              >> "$OUTPUT_ROOT/$parent/httpx_result.txt"
+              
+          done < "$PARENT_DOMAINS_FILE"
+          
+          echo "-> Processing complete for chunk $SAFE_CHUNK_ID."
       
       - name: Compute SAFE_CHUNK (no slashes)
         run: |
@@ -644,7 +627,7 @@ jobs:
             # Append (>>) the content of the current result file to the master result file for that domain.
             # The '>>' operator is crucial as it adds to the file, rather than overwriting it ('_').
             # This ensures that results from chunk_001, chunk_002, etc., for 'bmw.com' all end up in the same final file.
-            cat "$filepath" >> "$FINAL_RESULTS_DIR/$parent_domain/httpx_results.txt"
+            cat "$filepath" >> "$FINAL_RESULTS_DIR/$parent_domain/httpx_result.txt"
           done
 
           echo "-> Aggregation complete. Now deduplicating all merged files..."
