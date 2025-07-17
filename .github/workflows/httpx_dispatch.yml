@@ -588,66 +588,74 @@ jobs:
     # so you can collect results from the successful ones.
     if: always()
     steps:
-      - name: Download all result artifacts from parallel jobs
+      - name: Download all result artifacts into separate directories
         uses: actions/download-artifact@v4
         with:
-          # This pattern will match all artifacts starting with 'primary_httpx_dsieve_'
+          # This pattern still correctly matches all artifacts
           pattern: primary_httpx_dsieve_*
-          # Download them into a temporary directory for processing
+          # By NOT using 'merge-multiple', each artifact is downloaded into its own named sub-directory.
+          # This prevents any files from overwriting each other and is the key to preventing data loss.
           path: temp-artifacts/
-          merge-multiple: true # This v4 feature simplifies downloading into one directory
 
       - name: DEBUG - Show Downloaded Artifact Structure
         if: always()
         run: |
           echo "Listing downloaded artifacts structure in 'temp-artifacts':"
+          # This will now show a directory for each downloaded artifact, preventing data loss.
           ls -R temp-artifacts/
           
       - name: Consolidate, Merge, and Deduplicate Results
         id: consolidate
         shell: bash
         run: |
-          # The directory where we will build the final, merged results
+          # Directory for the final, clean output
           FINAL_RESULTS_DIR="final-merged-results"
           mkdir -p "$FINAL_RESULTS_DIR"
 
-          # The directory where 'download-artifact' placed all the files
+          # Parent directory where download-artifact placed all the individual artifact folders
           SOURCE_ARTIFACTS_DIR="temp-artifacts"
 
-          # Check if the source directory exists and has content
+          # Check if any artifacts were downloaded
           if [ ! -d "$SOURCE_ARTIFACTS_DIR" ] || [ -z "$(ls -A $SOURCE_ARTIFACTS_DIR)" ]; then
             echo "No artifacts were downloaded. Nothing to merge."
             echo "artifact_created=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          echo "-> Finding all result files and merging them by parent domain..."
+          echo "-> Finding all result files across all downloaded artifacts..."
 
-          # This command finds every 'httpx_result.txt' file within the downloaded artifacts.
-          # For each file found, it determines the parent domain from its directory path,
-          # creates a corresponding directory in our final output folder, and appends
-          # the content of the file to a merged file.
+          # This 'find' command is the core of the aggregation.
+          # It searches through all the downloaded artifact sub-directories for any file named 'httpx_result.txt'.
           find "$SOURCE_ARTIFACTS_DIR" -type f -name "httpx_result.txt" | while read -r filepath; do
-            # Example filepath: temp-artifacts/results/example.com/httpx_result.txt
-            # We want to extract 'example.com'
+            # --- HOW DATA IS SEPARATED BY DOMAIN (This is the key logic) ---
+            # 1. The original 'filepath' will look something like this:
+            #    'temp-artifacts/primary_httpx_dsieve_bmw.com_..._chunk_027/results/bmw.com/httpx_result.txt'
+            #
+            # 2. 'dirname "$filepath"' gets the full directory path:
+            #    'temp-artifacts/primary_httpx_dsieve_bmw.com_..._chunk_027/results/bmw.com'
+            #
+            # 3. 'basename' on that result extracts just the last component, which is the parent domain name:
+            #    'bmw.com'
             parent_domain=$(basename "$(dirname "$filepath")")
 
-            # Ensure the parent domain directory exists in the final output
+            # Create a directory for this domain in our final output if it doesn't exist
             mkdir -p "$FINAL_RESULTS_DIR/$parent_domain"
 
-            # Append the contents of the individual result file to the final merged file
-            # This handles the aggregation perfectly. Note the 's' in 'results' for the final file.
+            # Append (>>) the content of the current result file to the master result file for that domain.
+            # The '>>' operator is crucial as it adds to the file, rather than overwriting it ('_').
+            # This ensures that results from chunk_001, chunk_002, etc., for 'bmw.com' all end up in the same final file.
             cat "$filepath" >> "$FINAL_RESULTS_DIR/$parent_domain/httpx_results.txt"
           done
 
           echo "-> Aggregation complete. Now deduplicating all merged files..."
 
-          # After all files have been merged, we loop through the final result files
-          # and use 'sort -u' to remove any duplicate lines. This is crucial for
-          # ensuring there is no mismatch or redundancy.
+          # After all files have been aggregated, this command finds every final results file
+          # and runs 'sort -u' on it. This removes any duplicate lines that might have
+          # occurred across different chunks, ensuring a clean and correct final output.
+          
           find "$FINAL_RESULTS_DIR" -type f -name "*.txt" -print -exec sort -u -o {} {} \;
 
-          echo "-> Final results have been merged and deduplicated."
+          echo "-> Final results have been merged and deduplicated without data loss."
           echo "Final results structure:"
           ls -R "$FINAL_RESULTS_DIR"
           
