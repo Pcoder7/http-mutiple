@@ -322,8 +322,11 @@ jobs:
           fi
           
           # Output the full .tar.gz filename for the 'path' in upload-artifact
+          
           echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
+          
           # Output the base artifact name (without .tar.gz) for the 'name' in upload-artifact and for job output
+          
           echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload Full Chunks Package
@@ -534,7 +537,7 @@ jobs:
             mkdir -p "$OUTPUT_ROOT/$parent"
             
             # --- CHANGE 3: Append (>>) to the final file instead of overwriting (>) ---
-            grep -iE "(^|https?:\/\/|[^a-zA-Z0-9-])${parent}" "$HTTPX_OUT" --color=never >> "$OUTPUT_ROOT/$parent/httpx_result.txt"
+            grep -iE "(^|https?:\/\/|[^a-zA-Z0-9-])${parent}" "$HTTPX_OUT" --color=never >> "$OUTPUT_ROOT/$parent/httpx_result.txt" || true
               
           done < "$PARENT_DOMAINS_FILE"
           
