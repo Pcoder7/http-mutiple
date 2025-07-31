@@ -11,7 +11,7 @@ permissions:
   actions: write    # For triggering workflows in Account 2's repository
 
 env:
-  LINES_PER_CHUNK: 100
+  LINES_PER_CHUNK: 80
   PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's resolve job
   # Define Account 2 repo details here or get from secrets for more flexibility
   ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER || 'pushrockzz' }} # Fallback for testing
@@ -519,9 +519,9 @@ jobs:
           HTTPX_OUT="httpx_output_${SAFE_CHUNK_ID}.txt"
           echo "-> Running httpx against '$CHUNK_FILE_PATH'..."
           httpx \
-            -l "$CHUNK_FILE_PATH" \
+            -l "$CHUNK_FILE_PATH" -threads 80 \
             -sc -cl -vhost -websocket -fhr \
-            -retries 2 -timeout 30 -delay 200ms \
+            -retries 2 -timeout 30 -delay 100ms \
             -random-agent -silent -no-color \
             -o "$HTTPX_OUT"
             
