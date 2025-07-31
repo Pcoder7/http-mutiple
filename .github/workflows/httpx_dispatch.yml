@@ -4,6 +4,8 @@ on:
   repository_dispatch:
     types: [trigger_http_multiple]
 
+  workflow_dispatch:  
+
 permissions:
   contents: write   # For creating matrix.json, artifacts, and potentially committing aggregated results
   actions: write    # For triggering workflows in Account 2's repository
