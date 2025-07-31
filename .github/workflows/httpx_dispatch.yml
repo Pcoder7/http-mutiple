@@ -645,4 +645,118 @@ jobs:
           name: httpx-dsieve-merged-results
           path: final-merged-results/
           retention-days: 1
+
+  create_commit:
+    name: Create Commit in store-recon
+    runs-on: ubuntu-latest
+    needs: merge_results
+    if: needs.merge_results.outputs.artifact_created == 'true'
+
+    steps:
+      - name: Download Merged Results Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: httpx-dsieve-merged-results
+          path: final-merged-results/
+
+      - name: Checkout store-recon Repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.STORE_USERNAME }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
+          token: ${{ secrets.PAT_FOR_SECONDRY }}
+          path: store-recon
+
+      - name: Synchronize and Push with Retry
+        id: sync_and_push
+        env:
+          STORE_REPO_DIR: store-recon
+          SOURCE_DIR: final-merged-results
+          STORE_REPO_NAME: '${{ secrets.STORE_USERNAME }}/${{ secrets.STORE }}'
+             
+          STORE_OWNER: ${{ secrets.SECONDRY_USERNAME }}
+          STORE: ${{ secrets.STORE }}
+          STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDRY }}
+
+        run: |
+          cd $STORE_REPO_DIR
+
+          echo "Configuring git user..."
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "github-actions-bot@users.noreply.github.com"
+
+          # Retry loop to handle race conditions.
+          # We will try a maximum of 5 times.
+          for attempt in {1..5}
+          do
+            echo "[Attempt ${attempt}]"
+
+            # STEP 1: PULL LATEST CHANGES
+            # Get the absolute latest state from the remote repository.
+            # If another workflow pushed since we cloned, this will merge their changes here.
+            # The --ff-only flag would fail if the history diverged, but a full pull/merge
+            # is what we want. Let's use rebase to keep a clean history.
+            echo "-> Pulling latest changes from origin/main..."
+            if ! git pull --rebase origin main; then
+                echo "Pull failed. The remote history may have diverged in a complex way. Failing."
+                exit 1
+            fi
+            
+            # STEP 2: RE-RUN THE SMART MERGE
+            # This is the most critical part. We run our merge logic *after* pulling.
+            # This ensures we are merging our artifact's data with the absolute latest version of the file.
+            echo "-> Running smart merge against the latest version..."
+            MERGE_PERFORMED=false
+            for domain_dir in "../$SOURCE_DIR"/*; do
+              if [ -d "$domain_dir" ]; then
+                domain_name=$(basename "$domain_dir")
+                source_file="$domain_dir/httpx_result.txt"
+                dest_file="results/$domain_name/httpx_result.txt"
+                
+                mkdir -p "$(dirname "$dest_file")"
+                touch "$dest_file"
+                
+                awk 'FNR==NR {data[$1]=$0; next} {data[$1]=$0} END {for (key in data) print data[key]}' "$dest_file" "$source_file" | sort -u > "${dest_file}.tmp"
+                mv "${dest_file}.tmp" "$dest_file"
+                MERGE_PERFORMED=true
+              fi
+            done
+
+            if [ "$MERGE_PERFORMED" = false ]; then
+                echo "No source files found in artifact. Nothing to do."
+                exit 0
+            fi
+
+            # STEP 3: CHECK FOR CHANGES
+            # If our merge resulted in no changes (the data was already there), exit successfully.
+            if git diff --quiet --exit-code; then
+              echo "✅ No new unique data to commit. Repository is already up-to-date."
+              exit 0
+            fi
+            
+            # STEP 4: COMMIT
+            echo "-> Staging and committing changes..."
+            git add results/
+            git commit -m "feat(recon): Automated results update" -m "Update httpx results from workflow run ${{ github.run_id }}."
+            
+            # STEP 5: PUSH
+            # Attempt to push our new commit. This is the point where a race condition occurs.
+            echo "-> Attempting to push..."
+            if git push -v origin main; then
+              echo "✅ Push successful on attempt ${attempt}!"
+              exit 0 # Success! Exit the entire script.
+            else
+              echo "-> Push failed. Another workflow likely pushed ahead of us."
+              echo "-> Resetting local branch to remote state and retrying..."
+              # IMPORTANT: Reset the failed commit before trying to pull again.
+              # This throws away our local commit and puts our branch back to where the remote is.
+              git reset --hard origin/main
+              
+              # Wait for a random time to de-synchronize the workflows
+              sleep $((RANDOM % 5 + 2))
+            fi
+          done
+
+          # If the loop finishes, it means we failed all attempts.
+          echo "❌ Could not push changes after multiple attempts. Failing workflow."
+          exit 1
           
