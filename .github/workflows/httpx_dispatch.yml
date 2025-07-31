@@ -664,7 +664,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
-          token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          token: ${{ secrets.PAT_FOR_SECONDRY }}
           path: store-recon
 
       - name: Synchronize and Push with Retry
@@ -676,10 +676,10 @@ jobs:
              
           STORE_OWNER: ${{ secrets.STORE_OWNER}}
           STORE: ${{ secrets.STORE }}
-          STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
+          STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDRY }}
 
         run: |
-          cd $STORE_REPO_DIR
+          cd "${STORE}"
 
           echo "Configuring git user..."
           git config --global user.name "GitHub Actions Bot"
@@ -705,6 +705,7 @@ jobs:
             # STEP 2: RE-RUN THE SMART MERGE
             # This is the most critical part. We run our merge logic *after* pulling.
             # This ensures we are merging our artifact's data with the absolute latest version of the file.
+            
             echo "-> Running smart merge against the latest version..."
             MERGE_PERFORMED=false
             for domain_dir in "../$SOURCE_DIR"/*; do
