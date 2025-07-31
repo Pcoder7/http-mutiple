@@ -663,7 +663,7 @@ jobs:
       - name: Checkout store-recon Repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
+          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }} # IMPORTANT: Change this!
           token: ${{ secrets.PAT_FOR_SECONDRY }}
           path: store-recon
 
