@@ -662,7 +662,7 @@ jobs:
       - name: Checkout store-recon Repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.STORE_USERNAME }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
+          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
           token: ${{ secrets.PAT_FOR_SECONDRY }}
           path: store-recon
 
@@ -673,7 +673,7 @@ jobs:
           SOURCE_DIR: final-merged-results
           STORE_REPO_NAME: '${{ secrets.STORE_USERNAME }}/${{ secrets.STORE }}'
              
-          STORE_OWNER: ${{ secrets.SECONDRY_USERNAME }}
+          STORE_OWNER: ${{ secrets.STORE_OWNER}}
           STORE: ${{ secrets.STORE }}
           STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDRY }}
 
