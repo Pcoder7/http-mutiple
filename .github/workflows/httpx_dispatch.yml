@@ -663,7 +663,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}.git # IMPORTANT: Change this!
-          token: ${{ secrets.PAT_FOR_SECONDRY }}
+          token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           path: store-recon
 
       - name: Synchronize and Push with Retry
@@ -671,11 +671,11 @@ jobs:
         env:
           STORE_REPO_DIR: store-recon
           SOURCE_DIR: final-merged-results
-          STORE_REPO_NAME: '${{ secrets.STORE_USERNAME }}/${{ secrets.STORE }}'
+          STORE_REPO_NAME: '${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}'
              
           STORE_OWNER: ${{ secrets.STORE_OWNER}}
           STORE: ${{ secrets.STORE }}
-          STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDRY }}
+          STORE_TOKEN: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
 
         run: |
           cd $STORE_REPO_DIR
