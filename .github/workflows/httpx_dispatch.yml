@@ -11,7 +11,7 @@ permissions:
   actions: write    # For triggering workflows in Account 2's repository
 
 env:
-  LINES_PER_CHUNK: 15
+  LINES_PER_CHUNK: 30
   DISTRIBUTION_THRESHOLD: 21    # <-- LINKED VARIABLE
   PRIMARY_PERCENTAGE: 45        # <-- LINKED VARIABLE
   SECONDARY_PERCENTAGE: 40      # <-- LINKED VARIABLE
