@@ -11,11 +11,19 @@ permissions:
   actions: write    # For triggering workflows in Account 2's repository
 
 env:
-  LINES_PER_CHUNK: 80
-  PRIMARY_ACCOUNT_MAX_PARALLEL: 20 # Max parallel jobs for THIS account's resolve job
-  # Define Account 2 repo details here or get from secrets for more flexibility
-  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER || 'pushrockzz' }} # Fallback for testing
-  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT2_REPO_NAME || 'httpx-rec' }} # Fallback for testing
+  LINES_PER_CHUNK: 15
+  DISTRIBUTION_THRESHOLD: 21    # <-- LINKED VARIABLE
+  PRIMARY_PERCENTAGE: 45        # <-- LINKED VARIABLE
+  SECONDARY_PERCENTAGE: 40      # <-- LINKED VARIABLE
+
+  # --- Account 2 Details ---
+  ACCOUNT2_REPO_OWNER: ${{ secrets.ACCOUNT2_REPO_OWNER || 'pushrockzz' }}
+  ACCOUNT2_REPO_NAME: ${{ secrets.ACCOUNT2_REPO_NAME || 'httpx-rec' }}
+
+  # --- Account 3 Details ---
+  ACCOUNT3_REPO_OWNER: ${{ secrets.ACCOUNT3_REPO_OWNER || 'Sari2705' }}      
+  ACCOUNT3_REPO_NAME: ${{ secrets.ACCOUNT3_REPO_NAME || 'httpx-rec3' }}       
+
 
 jobs:
   prepare_all_chunks_and_package:
@@ -339,7 +347,7 @@ jobs:
           name: ${{ steps.package_chunks.outputs.base_artifact_name }}
           # Use the full tar filename output from the 'package_chunks' step
           path: ${{ steps.package_chunks.outputs.package_tar_filename }}
-          retention-days: 2
+          retention-days: 1
 
   distribute_and_trigger_secondary:
     name: Distribute Work & Trigger Secondary
@@ -348,44 +356,81 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       primary_matrix_json: ${{ steps.calculate_distribution.outputs.primary_matrix }}
+      secondary_matrix_json: ${{ steps.calculate_distribution.outputs.secondary_matrix }}
+      tertiary_matrix_json: ${{ steps.calculate_distribution.outputs.tertiary_matrix }}
       secondary_processing_triggered: ${{ steps.trigger_secondary.outcome == 'success' && steps.calculate_distribution.outputs.secondary_chunks_exist == 'true' }}
+            
+      tertiary_processing_triggered: ${{ steps.trigger_tertiary.outcome == 'success' && steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true' }}
+      
     steps:
+      
       - name: Calculate Chunk Distribution for Accounts
         id: calculate_distribution
         shell: bash
         run: |
           ALL_CHUNKS_JSON='${{ needs.prepare_all_chunks_and_package.outputs.all_chunks_matrix_json }}'
-          PRIMARY_MAX_PARALLEL=${{ env.PRIMARY_ACCOUNT_MAX_PARALLEL }}
+          TOTAL_CHUNKS=${{ needs.prepare_all_chunks_and_package.outputs.total_chunks_count }}
+
+           # This is where the script reads the control variable
+          THRESHOLD=${{ env.DISTRIBUTION_THRESHOLD }}
           
           echo "Full matrix (first 200 chars): $(echo "$ALL_CHUNKS_JSON" | head -c 200)"
-          echo "Primary account max parallel: $PRIMARY_MAX_PARALLEL"
+          
 
-          # Chunks for Account 1 (Primary)
-          CHUNKS_FOR_PRIMARY=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson limit "$PRIMARY_MAX_PARALLEL" '.[0:$limit]')
-          echo "primary_matrix=$CHUNKS_FOR_PRIMARY" >> $GITHUB_OUTPUT
-          echo "Primary matrix (first 200 chars): $(echo "$CHUNKS_FOR_PRIMARY" | head -c 200)"
+          echo "Total chunks generated: $TOTAL_CHUNKS"
+          echo "Distribution threshold: $THRESHOLD"
 
-          # Chunks for Account 2 (Secondary)
-          CHUNKS_FOR_SECONDARY=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson offset "$PRIMARY_MAX_PARALLEL" '.[$offset:]')
-          SECONDARY_COUNT=$(echo "$CHUNKS_FOR_SECONDARY" | jq 'length')
-
-          if [ "$SECONDARY_COUNT" -eq 0 ]; then
-            echo "No chunks remaining for secondary account."
-            echo "secondary_matrix=[]" >> $GITHUB_OUTPUT
-            echo "secondary_chunks_exist=false" >> $GITHUB_OUTPUT
+          if [ "$TOTAL_CHUNKS" -lt "$THRESHOLD" ]; then
+            # STRATEGY 1: Below threshold, primary gets everything
+            echo "Total chunks are below threshold. Assigning all work to Primary Account."
+            PRIMARY_CHUNKS_JSON="$ALL_CHUNKS_JSON"
+            SECONDARY_CHUNKS_JSON="[]"
+            TERTIARY_CHUNKS_JSON="[]"
           else
-            echo "Secondary matrix (first 200 chars): $(echo "$CHUNKS_FOR_SECONDARY" | head -c 200)"
-            echo "secondary_matrix=$CHUNKS_FOR_SECONDARY" >> $GITHUB_OUTPUT
-            echo "secondary_chunks_exist=true" >> $GITHUB_OUTPUT
-          fi
+
+            # STRATEGY 2: At or above threshold, percentage split is performed
+            
+            echo "Total chunks are at or above threshold. Applying percentage split."
+            
+            # Reading the percentage variables
+            
+            PRIMARY_PERCENT=${{ env.PRIMARY_PERCENTAGE }}
+            SECONDARY_PERCENT=${{ env.SECONDARY_PERCENTAGE }}
+
+            # Calculating the number of chunks for each account using 'bc' for math
+            
+            PRIMARY_CHUNK_COUNT=$(echo "($TOTAL_CHUNKS * $PRIMARY_PERCENT) / 100" | bc)
+            SECONDARY_CHUNK_COUNT=$(echo "($TOTAL_CHUNKS * $SECONDARY_PERCENT) / 100" | bc)
+            OFFSET_FOR_TERTIARY=$((PRIMARY_CHUNK_COUNT + SECONDARY_CHUNK_COUNT))
+
+            # Slicing the JSON array with jq to create the new, smaller matrices
+            PRIMARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson limit "$PRIMARY_CHUNK_COUNT" '.[0:$limit]')
+            SECONDARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson offset "$PRIMARY_CHUNK_COUNT" --argjson limit "$SECONDARY_CHUNK_COUNT" '.[$offset : $offset+$limit]')
+            TERTIARY_CHUNKS_JSON=$(echo "$ALL_CHUNKS_JSON" | jq -c --argjson offset "$OFFSET_FOR_TERTIARY" '.[$offset:]')
+          fi  
+
+          echo "primary_matrix=$PRIMARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+          echo "secondary_matrix=$SECONDARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+          echo "tertiary_matrix=$TERTIARY_CHUNKS_JSON" >> $GITHUB_OUTPUT
+          
+          # Setting boolean flags for easier conditional checks later
+          if [ "$(echo "$SECONDARY_CHUNKS_JSON" | jq 'length')" -eq 0 ]; then echo "secondary_chunks_exist=false" >> $GITHUB_OUTPUT; else echo "secondary_chunks_exist=true" >> $GITHUB_OUTPUT; fi
+          if [ "$(echo "$TERTIARY_CHUNKS_JSON" | jq 'length')" -eq 0 ]; then echo "tertiary_chunks_exist=false" >> $GITHUB_OUTPUT; else echo "tertiary_chunks_exist=true" >> $GITHUB_OUTPUT; fi
+
+      - name: Add Delay Between API Triggers For Secondary Account
+        if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
+        run: |
+          echo "Pausing for 15 seconds to avoid API rate-limiting before triggering the Secondary account..."
+          sleep 15
       
-      - name: Prepare Trigger Payload
+      - name: Prepare Trigger Payload For Secondry
         id: prepare_payload
         if: steps.calculate_distribution.outputs.secondary_chunks_exist == 'true'
         shell: bash
         run: |
           # Ensure the secondary_matrix output from the previous step is treated as a string
           # that already represents a JSON array. jq's --argjson will parse it.
+          
           SECONDARY_MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.secondary_matrix }}'
 
           # Validate that SECONDARY_MATRIX_AS_STRING is actually valid JSON before --argjson
@@ -442,6 +487,54 @@ jobs:
           token: ${{ secrets.PAT_FOR_SECONDARY_ACCOUNT_REPO }}
           inputs: ${{ steps.prepare_payload.outputs.json_string }}
           ref: main # Or your default branch name in Account 2
+      
+      - name: Add Delay Between API Triggers for Tertiary Account
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        run: |
+          echo "Pausing for 15 seconds to avoid API rate-limiting before triggering the Tertiary account..."
+          sleep 60
+
+      - name: Prepare Trigger Payload For Tertiary
+        id: prepare_payload_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        shell: bash
+        run: |
+          MATRIX_AS_STRING='${{ steps.calculate_distribution.outputs.tertiary_matrix }}'
+          JSON_PAYLOAD=$(jq -cn \
+            --arg server_url "${{ github.server_url }}" \
+            --arg repo_owner "${{ github.repository_owner }}" \
+            --arg repo_name "${{ github.event.repository.name }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg artifact_name "${{ needs.prepare_all_chunks_and_package.outputs.chunk_package_artifact_name }}" \
+            --arg matrix_as_a_string "${MATRIX_AS_STRING}" \
+            '{
+              "primary_github_server_url": $server_url,
+              "primary_repo_owner": $repo_owner,
+              "primary_repo_name": $repo_name,
+              "primary_run_id": $run_id,
+              "chunk_package_artifact_name": $artifact_name,
+              "tertiary_matrix_json": $matrix_as_a_string 
+            }')
+          echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
+     
+      - name: DEBUG - Show Exact Inputs String
+        id: debug_show_inputs_tertiary
+        run: |
+          INPUTS_STRING="${{ steps.prepare_payload_tertiary.outputs.json_string }}"
+          echo "DEBUG: Exact string value being passed to 'inputs':"
+          echo "$INPUTS_STRING"
+          echo "DEBUG: Length of inputs string: ${#INPUTS_STRING}"
+          
+      - name: Trigger Tertiary Account Workflow
+        id: trigger_tertiary
+        if: steps.calculate_distribution.outputs.tertiary_chunks_exist == 'true'
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: httpx_receive.yml # The workflow file name in the tertiary repo
+          repo: ${{ env.ACCOUNT3_REPO_OWNER }}/${{ env.ACCOUNT3_REPO_NAME }}
+          token: ${{ secrets.PAT_FOR_TERTIARY_ACCOUNT_REPO }} # You will need to add this secret
+          inputs: ${{ steps.prepare_payload_tertiary.outputs.json_string }}
+          ref: main
 
   resolve_primary_account_chunks:
     name: Resolve Primary Account Chunks (httpx + dsieve)
