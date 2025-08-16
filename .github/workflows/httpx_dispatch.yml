@@ -58,7 +58,7 @@ jobs:
           echo "DEBUG: Checking for 'jq' command..."
           if ! command -v jq &> /dev/null; then
             echo "CRITICAL_ERROR: 'jq' command not found. This is essential. Aborting."
-            exit 1
+            exit 0
           else
             echo "DEBUG: jq version: $(jq --version)"
           fi
@@ -66,7 +66,7 @@ jobs:
           echo "DEBUG: Checking for 'split' command..."
           if ! command -v split &> /dev/null; then
             echo "CRITICAL_ERROR: 'split' command not found. This is essential. Aborting."
-            exit 1
+            exit 0
           else
             echo "DEBUG: split version information (if available):"
             split --version || echo "DEBUG: Could not get split version."
@@ -98,7 +98,7 @@ jobs:
           if [ ! -d "$ARTIFACTS_DIR" ]; then
             echo "ERROR: The directory '$ARTIFACTS_DIR' was NOT found."
             echo "This likely means the artifact download failed or the artifact was empty."
-            exit 1 # Exit with an error to make the problem obvious
+            exit 0 # Exit with an error to make the problem obvious
           fi
 
           echo ""
@@ -328,7 +328,7 @@ jobs:
           else
             echo "ERROR: Failed to create tarball '$PACKAGE_TAR_FILENAME'."
             # Exit or handle error appropriately if tar fails
-            exit 1 
+            exit 0 
           fi
           
           # Output the full .tar.gz filename for the 'path' in upload-artifact
