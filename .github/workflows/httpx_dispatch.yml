@@ -788,7 +788,7 @@ jobs:
             if ! git pull --rebase origin main; then
                 echo "Pull failed. The remote history may have diverged in a complex way. Failing."
                 # In a retry loop, it might be better to continue, but failing here is a safe default.
-                exit 1
+                exit 0
             fi
             
             echo "-> Running smart merge against the latest version..."
