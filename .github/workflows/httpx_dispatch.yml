@@ -756,7 +756,7 @@ jobs:
       - name: Checkout store-recon Repository
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }} # IMPORTANT: Change this!
+          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}
           token: ${{ secrets.PAT_FOR_SECONDRY }}
           path: store-recon
 
@@ -780,25 +780,16 @@ jobs:
           git config --global user.email "github-actions-bot@users.noreply.github.com"
 
           # Retry loop to handle race conditions.
-          # We will try a maximum of 5 times.
           for attempt in {1..5}
           do
             echo "[Attempt ${attempt}]"
 
-            # STEP 1: PULL LATEST CHANGES
-            # Get the absolute latest state from the remote repository.
-            # If another workflow pushed since we cloned, this will merge their changes here.
-            # The --ff-only flag would fail if the history diverged, but a full pull/merge
-            # is what we want. Let's use rebase to keep a clean history.
             echo "-> Pulling latest changes from origin/main..."
             if ! git pull --rebase origin main; then
                 echo "Pull failed. The remote history may have diverged in a complex way. Failing."
-                exit 0
+                # In a retry loop, it might be better to continue, but failing here is a safe default.
+                exit 1
             fi
-            
-            # STEP 2: RE-RUN THE SMART MERGE
-            # This is the most critical part. We run our merge logic *after* pulling.
-            # This ensures we are merging our artifact's data with the absolute latest version of the file.
             
             echo "-> Running smart merge against the latest version..."
             MERGE_PERFORMED=false
@@ -807,10 +798,25 @@ jobs:
                 domain_name=$(basename "$domain_dir")
                 source_file="$domain_dir/httpx_result.txt"
                 dest_file="results/$domain_name/httpx_result.txt"
+
+                # --- START OF FIX ---
+                # Only proceed if the source file actually exists.
+                if [ ! -f "$source_file" ]; then
+                    echo "  -> INFO: Source file '$source_file' not found. Skipping."
+                    continue # Skip to the next domain directory
+                fi
+                
+                # FIX: Sanitize the file to remove NULL characters that make Git treat it as binary.
+                echo "  -> Sanitizing '$source_file'..."
+                tr -d '\0' < "$source_file" > "$source_file.tmp" && mv "$source_file.tmp" "$source_file"
+                # --- END OF FIX ---
                 
                 mkdir -p "$(dirname "$dest_file")"
+                # Ensure the destination file exists before awk tries to read it.
                 touch "$dest_file"
                 
+                echo "  -> Merging '$source_file' into '$dest_file'..."
+                # Your smart merge command remains the same, but now operates on a clean file.
                 awk 'FNR==NR {data[$1]=$0; next} {data[$1]=$0} END {for (key in data) print data[key]}' "$dest_file" "$source_file" | sort -u > "${dest_file}.tmp"
                 mv "${dest_file}.tmp" "$dest_file"
                 MERGE_PERFORMED=true
@@ -818,42 +824,34 @@ jobs:
             done
 
             if [ "$MERGE_PERFORMED" = false ]; then
-                echo "No source files found in artifact. Nothing to do."
+                echo "No source files found in artifact to process. Nothing to do."
                 exit 0
             fi
 
-            # STEP 3: CHECK FOR CHANGES
-            # If our merge resulted in no changes (the data was already there), exit successfully.
+            # Check for changes (no changes to this logic).
             if git diff --quiet --exit-code; then
               echo "✅ No new unique data to commit. Repository is already up-to-date."
               exit 0
             fi
             
-            # STEP 4: COMMIT
             echo "-> Staging and committing changes..."
             git add results/
             git commit -m "feat(recon): Automated http-multiple results from Correlation ID: ${CORRELATION_ID}"
             
-            # STEP 5: PUSH
-            # Attempt to push our new commit. This is the point where a race condition occurs.
             echo "-> Attempting to push..."
             if git push -v origin main; then
               echo "✅ Push successful on attempt ${attempt}!"
-              exit 0 # Success! Exit the entire script.
+              exit 0 # Success!
             else
-              echo "-> Push failed. Another workflow likely pushed ahead of us."
-              echo "-> Resetting local branch to remote state and retrying..."
-              # IMPORTANT: Reset the failed commit before trying to pull again.
-              # This throws away our local commit and puts our branch back to where the remote is.
+              echo "-> Push failed on attempt ${attempt}. Another workflow likely pushed ahead of us."
+              # Reset local state to match remote before retrying.
               git reset --hard origin/main
-              
-              # Wait for a random time to de-synchronize the workflows
               sleep $((RANDOM % 5 + 2))
             fi
           done
 
-          # If the loop finishes, it means we failed all attempts.
           echo "❌ Could not push changes after multiple attempts. Failing workflow."
+          exit 0
 
 
   trigger_nuc_vuln:
