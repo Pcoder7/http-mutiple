@@ -856,5 +856,23 @@ jobs:
 
           # If the loop finishes, it means we failed all attempts.
           echo "❌ Could not push changes after multiple attempts. Failing workflow."
+
+
+  trigger_nuc_vuln:
+    name: Trigger Nuc Vuln
+    needs: [create_commit]
+    
+    if: success() 
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger next workflow
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: nuc_scan.yml
+          repo: Pcoder7/nuc-vuln
+          token: ${{ secrets.PAT_TOKEN }}
+          ref: main
+          
+          
           
           
