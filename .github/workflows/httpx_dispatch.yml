@@ -471,13 +471,7 @@ jobs:
           # Set the constructed JSON string as an output of this step
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
       
-      - name: DEBUG - Show Exact Inputs String
-        id: debug_show_inputs
-        run: |
-          INPUTS_STRING="${{ steps.prepare_payload.outputs.json_string }}"
-          echo "DEBUG: Exact string value being passed to 'inputs':"
-          echo "$INPUTS_STRING"
-          echo "DEBUG: Length of inputs string: ${#INPUTS_STRING}"
+
 
       - name: Trigger Secondary Account Workflow
         id: trigger_secondary 
@@ -521,13 +515,6 @@ jobs:
             }')
           echo "json_string=$JSON_PAYLOAD" >> $GITHUB_OUTPUT
      
-      - name: DEBUG - Show Exact Inputs String
-        id: debug_show_inputs_tertiary
-        run: |
-          INPUTS_STRING="${{ steps.prepare_payload_tertiary.outputs.json_string }}"
-          echo "DEBUG: Exact string value being passed to 'inputs':"
-          echo "$INPUTS_STRING"
-          echo "DEBUG: Length of inputs string: ${#INPUTS_STRING}"
           
       - name: Trigger Tertiary Account Workflow
         id: trigger_tertiary
