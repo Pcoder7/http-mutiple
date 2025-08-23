@@ -462,7 +462,7 @@ jobs:
               "primary_repo_owner": $repo_owner,
               "primary_repo_name": $repo_name,
               "primary_run_id": $run_id,
-              "commit_pattern": "$commit_pattern",
+              "commit_pattern": $commit_pattern,
               "chunk_package_artifact_name": $artifact_name,
               "secondary_matrix_json": $matrix_as_a_string 
             }')
