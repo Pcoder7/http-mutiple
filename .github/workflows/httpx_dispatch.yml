@@ -654,10 +654,7 @@ jobs:
   merge_results:
     name: Merge All httpx Results
     runs-on: ubuntu-latest
-    # This job needs to run only after all the parallel 'resolve' jobs are complete.
     needs: resolve_primary_account_chunks
-    # 'if: always()' ensures this job runs even if some of the parallel jobs failed,
-    # so you can collect results from the successful ones.
     if: always()
     steps:
       - name: Download all result artifacts into separate directories
@@ -665,8 +662,6 @@ jobs:
         with:
           # This pattern still correctly matches all artifacts
           pattern: primary_httpx_dsieve_*
-          # By NOT using 'merge-multiple', each artifact is downloaded into its own named sub-directory.
-          # This prevents any files from overwriting each other and is the key to preventing data loss.
           path: temp-artifacts/
 
       - name: DEBUG - Show Downloaded Artifact Structure
@@ -745,7 +740,7 @@ jobs:
     name: Create Commit in store-recon
     runs-on: ubuntu-latest
     needs: merge_results
-
+    if: always() && needs.merge_results.outputs.has_results == 'true'
     steps:
       - name: Download Merged Results Artifact
         uses: actions/download-artifact@v4
@@ -858,7 +853,7 @@ jobs:
     name: Trigger Nuc Vuln
     needs: [create_commit]
     
-    if: success() 
+    if: always() 
     runs-on: ubuntu-latest
     steps:
       - name: Trigger next workflow
