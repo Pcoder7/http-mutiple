@@ -612,9 +612,9 @@ jobs:
           HTTPX_OUT="httpx_output_${SAFE_CHUNK_ID}.txt"
           echo "-> Running httpx against '$CHUNK_FILE_PATH'..."
           httpx \
-            -l "$CHUNK_FILE_PATH" -threads 80 \
-            -sc -cl -vhost -websocket -fhr \
-            -retries 2 -timeout 30 -delay 100ms \
+            -l "$CHUNK_FILE_PATH" -threads 100 \
+            -sc -cl -vhost -fhr \
+            -retries 1 -timeout 20 -delay 100ms \
             -random-agent -silent -no-color \
             -o "$HTTPX_OUT"
             
