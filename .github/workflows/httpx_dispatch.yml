@@ -45,309 +45,153 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: DEBUG - Verify Tools and Initial File System State
-        shell: bash
-        run: |
-          echo "DEBUG: Current directory: $(pwd)"
-          echo "DEBUG: Listing all files in repository root and subdirectories:"
-          find . -print
-          echo "-----------------------------------------------------"
-          echo "DEBUG: Specifically looking for subdomains.txt files:"
-          find . -type f -name 'subdomains.txt' -print || echo "DEBUG: 'find' for subdomains.txt failed or found nothing."
-          echo "-----------------------------------------------------"
-          echo "DEBUG: Checking for 'jq' command..."
-          if ! command -v jq &> /dev/null; then
-            echo "CRITICAL_ERROR: 'jq' command not found. This is essential. Aborting."
-            exit 0
-          else
-            echo "DEBUG: jq version: $(jq --version)"
-          fi
-          echo "-----------------------------------------------------"
-          echo "DEBUG: Checking for 'split' command..."
-          if ! command -v split &> /dev/null; then
-            echo "CRITICAL_ERROR: 'split' command not found. This is essential. Aborting."
-            exit 0
-          else
-            echo "DEBUG: split version information (if available):"
-            split --version || echo "DEBUG: Could not get split version."
-          fi
-          echo "-----------------------------------------------------"
-      
-      - name: Download Subdomain Artifacts from Source Repo
-        uses: actions/download-artifact@v4
+      - name: Checkout Store Repo to Find Inputs
+        uses: actions/checkout@v4
         with:
+          repository: ${{ secrets.STORE_OWNER }}/${{ secrets.STORE }}
+          token: ${{ secrets.PAT_FOR_SECONDRY }}
+          fetch-depth: 0
 
-          github-token: ${{ secrets.PAT_TOKEN }}
-          # This tells the action to get artifacts from the specific workflow run that triggered this one.
-          run-id: ${{ github.event.client_payload.run_id  }}
-          repository:  ${{ github.event.client_payload.results_repo }}
-          pattern: puredns-final-sorted-*
-          path: downloaded-artifacts
-
-      - name: DEBUG - Show Downloaded Artifact Structure
-        if: always() # This ensures the step runs even if the download step had warnings
+      - name: Extract Entries from store-recon History
+        id: extract_entries
         shell: bash
         run: |
-          echo "======================================================================"
-          echo "               DEBUGGING DOWNLOADED ARTIFACTS                         "
-          echo "======================================================================"
+          echo "INFO: Searching for entries within the 'store-recon-data' directory."
+          cd store-recon-data
+          CORRELATION_ID="${{ github.event.client_payload.run_id }}"
+          if [ -z "$CORRELATION_ID" ]; then
+            # MODIFIED: Changed exit 1 to exit 0 and added a clear error message.
+            echo "::error::Trigger payload did not contain a 'run_id'. Cannot correlate commits. Exiting gracefully."
+            exit 0
+          fi
           
-          ARTIFACTS_DIR="downloaded-artifacts"
+          FULL_PATTERN="feat: Add resolved subdomains from distributed scan Correlation ID: ${CORRELATION_ID}"
+          TARGET_PATHSPEC="results/*/subdomains_ports.txt"
 
-          echo "INFO: Checking if the artifacts directory '$ARTIFACTS_DIR' exists..."
-          if [ ! -d "$ARTIFACTS_DIR" ]; then
-            echo "ERROR: The directory '$ARTIFACTS_DIR' was NOT found."
-            echo "This likely means the artifact download failed or the artifact was empty."
-            exit 0 # Exit with an error to make the problem obvious
+          echo "-> Searching for commits with the pattern: '$FULL_PATTERN'"
+          COMMIT_LIST=$(git log --no-merges --grep="$FULL_PATTERN" --format="%H" || true)
+
+          if [ -z "$COMMIT_LIST" ]; then
+            echo "::warning::No commits found in 'store-recon' for Correlation ID '$CORRELATION_ID'."
+            touch ../subdomains.txt
+            exit 0
           fi
 
-          echo ""
-          echo "--- Option A: Recursive Listing (Comprehensive & Always Available) ---"
-          echo "This shows all downloaded files and their directories."
-          ls -R "$ARTIFACTS_DIR"
+          LATEST_COMMIT=$(echo "$COMMIT_LIST" | head -n 1)
+          OLDEST_COMMIT=$(echo "$COMMIT_LIST" | tail -n 1)
+          echo "-> Found commit(s) to process: $LATEST_COMMIT...$OLDEST_COMMIT"
 
-          echo ""
-          echo "--- Option B: Tree View (More Visual, if 'tree' is installed) ---"
-          # 'tree' gives a nicer visual output but may not be installed.
-          # We check for it first to avoid errors.
-          if command -v tree &> /dev/null; then
-            echo "The 'tree' command is available. Displaying visual structure:"
-            tree "$ARTIFACTS_DIR"
+          if git rev-parse --verify $OLDEST_COMMIT^ >/dev/null 2>&1; then
+            git diff "$OLDEST_COMMIT^" "$LATEST_COMMIT" --unified=0 -- "$TARGET_PATHSPEC" > raw_diff.log || true
           else
-            echo "The 'tree' command is not available in this container. Skipping tree view."
+            git show "$LATEST_COMMIT" --unified=0 -- "$TARGET_PATHSPEC" > raw_diff.log || true
           fi
           
-          echo ""
-          echo "--- Verifying Target Files ---"
-          echo "This shows the exact 'subdomains_ports.txt' files that will be processed by the next step:"
-          find "$ARTIFACTS_DIR" -type f -name "subdomains_ports.txt" -print
+          grep '^\+' raw_diff.log | grep -vE '^\+\+\+' | awk '{print $1}' | sed 's/^+//' > ../subdomains.txt || true
+          cd ..
           
-          echo "======================================================================"
+          COUNT=$(wc -l < subdomains.txt)
+          echo "✅ Successfully extracted $COUNT new entries into subdomains.txt"
 
-          
       - name: Build Full Matrix & Create Chunks
         id: build_full_matrix
         shell: bash
         run: |
-          # --- Start of Script ---
-          ARTIFACTS_DIR="downloaded-artifacts"
-          COMBINED_TARGET_FILE="subdomains.txt" 
+          JSON_MATRIX='[]'
+          INPUT_FILE="subdomains.txt"
 
-          echo "INFO: Preparing input from downloaded artifacts..."
-          if [ ! -d "$ARTIFACTS_DIR" ] || [ -z "$(ls -A $ARTIFACTS_DIR)" ]; then
-             echo "WARNING: Artifacts directory '$ARTIFACTS_DIR' is missing or empty..."
-          else
-             echo "INFO: Finding all 'subdomains_ports.txt' files and combining them into '$COMBINED_TARGET_FILE'..."
-             find "$ARTIFACTS_DIR" -type f -name "subdomains_ports.txt" -exec cat {} + > "$COMBINED_TARGET_FILE"
-
+          echo "INFO: Processing input file: '$INPUT_FILE'"
+          if [ ! -s "$INPUT_FILE" ]; then
+            echo "WARNING: Input file '$INPUT_FILE' is missing or empty. No chunks will be generated."
+            echo "total_chunks=0" >> $GITHUB_OUTPUT
+            echo "full_matrix=[]" >> $GITHUB_OUTPUT
+            exit 0
           fi
-           echo "--- Pre-processing complete. Starting original script logic. ---"
-
-          JSON_MATRIX='[]' # Initialize as an empty JSON array string
-          echo "INFO: Initializing JSON_MATRIX as: '$JSON_MATRIX'"
-
-          echo "INFO: Locating 'subdomains.txt' files..."
-          find . -type f -name "subdomains.txt" -print0 > found_files.tmp
-
-          declare -a files=() # Explicitly declare as an array
-          while IFS= read -r -d $'\0' file_path_from_find; do
-            standardized_file_path=$(echo "$file_path_from_find" | sed 's|^\./||')
-            files+=("$standardized_file_path")
-          done < found_files.tmp
-          rm found_files.tmp # Clean up temporary file
-
-          if [ "${#files[@]}" -eq 0 ]; then
-            echo "WARNING: No 'subdomains.txt' files found in the repository."
-            echo "INFO: JSON_MATRIX will remain '[]'. No chunks will be generated."
-          else
-            echo "INFO: Found ${#files[@]} 'subdomains.txt' file(s):"
-            printf "  => '%s'\n" "${files[@]}" # Print each found file for clarity
-
-            for file_path in "${files[@]}"; do
-              echo "-----------------------------------------------------"
-              echo "INFO: Processing file: '$file_path'"
-
-              domain_dir=$(dirname "$file_path")
-              if [ "$domain_dir" == "." ]; then
-                domain=$(basename "$file_path" .txt)
-              else
-                domain=$(basename "$domain_dir")
-              fi
-              echo "INFO: Deduced domain: '$domain'"
-
-              if [ ! -f "$file_path" ]; then
-                echo "ERROR: File '$file_path' reported by find, but not found now. Skipping."
-                continue
-              fi
-              if [ ! -s "$file_path" ]; then
-                echo "WARNING: File '$file_path' is empty. Skipping splitting for this file."
-                continue
-              fi
-
-              echo "INFO: Creating chunk directory 'chunks/$domain' if it doesn't exist."
-              mkdir -p "chunks/$domain"
-
-              output_chunk_prefix="chunks/$domain/chunk_"
-              echo "INFO: Splitting '$file_path' into chunks in 'chunks/$domain/' with prefix '$output_chunk_prefix' (max $LINES_PER_CHUNK lines/chunk)"
-              
-              split -l "$LINES_PER_CHUNK" -a 3 --numeric-suffixes=1 "$file_path" "$output_chunk_prefix"
-              split_exit_code=$?
-              if [ $split_exit_code -ne 0 ]; then
-                echo "ERROR: 'split' command failed with exit code $split_exit_code for file '$file_path'. Skipping chunk generation for this file."
-                continue
-              fi
-              
-              CHUNK_COUNT_FOR_THIS_FILE=0
-              while IFS= read -r chunk_file_path; do
-                if [ -z "$chunk_file_path" ]; then continue; fi
-
-                echo "DEBUG: Processing chunk_file_path: '$chunk_file_path' for domain '$domain'"
-                echo "DEBUG: Current JSON_MATRIX before jq (first 100 chars): $(echo "$JSON_MATRIX" | head -c 100)"
-                echo "DEBUG: Validating current JSON_MATRIX with jq -e:"
-                if echo "$JSON_MATRIX" | jq -e . > /dev/null 2>&1; then
-                  echo "DEBUG: Current JSON_MATRIX is VALID."
-                else
-                  echo "CRITICAL_ERROR_DETECTED: Current JSON_MATRIX is INVALID before processing '$chunk_file_path'."
-                  echo "CRITICAL_ERROR_DETECTED: JSON_MATRIX content: $JSON_MATRIX"
-                  if [ "$JSON_MATRIX" != "[]" ] && [ "$CHUNK_COUNT_FOR_THIS_FILE" -gt 0 ]; then
-                      echo "ABORTING chunk addition for this file due to previously corrupted JSON_MATRIX."
-                      break 
-                  else
-                      echo "WARNING: JSON_MATRIX was invalid but appeared to be at an initial state. Attempting to reset to []."
-                      JSON_MATRIX="[]"
-                  fi
-                fi
-                
-                if ! command -v jq &> /dev/null; then
-                  echo "CRITICAL_ERROR: 'jq' command not found during chunk processing. Aborting this file's chunk addition."
-                  break 
-                fi
-                
-                echo "DEBUG: jq command to be run: printf '%s' \"\$JSON_MATRIX\" | jq -c --arg d \"$domain\" --arg c \"$chunk_file_path\" '. + [{domain:\$d,chunk:\$c}]'"
-                TEMP_JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg d "$domain" --arg c "$chunk_file_path" '. + [{domain:$d,chunk:$c}]')
-                jq_exit_code=$?
-
-                if [ $jq_exit_code -ne 0 ]; then
-                  echo "ERROR: jq command failed (exit code $jq_exit_code) when trying to add chunk '$chunk_file_path' for domain '$domain'."
-                  echo "ERROR: Input JSON_MATRIX was (first 100 chars): $(echo "$JSON_MATRIX" | head -c 100)"
-                  echo "ERROR: Arguments to jq were: domain='$domain', chunk_file_path='$chunk_file_path'"
-                  continue
-                elif [ -z "$TEMP_JSON_MATRIX" ]; then
-                  echo "ERROR: jq command produced empty output for chunk '$chunk_file_path'. This should not happen with '. + [...]'."
-                  echo "ERROR: Input JSON_MATRIX that led to empty output (first 200 chars): $(echo "$JSON_MATRIX" | head -c 200)"
-                  echo "ERROR: Full input JSON_MATRIX that led to empty output: $JSON_MATRIX"
-                  echo "ERROR: Arguments to jq were: domain='$domain', chunk_file_path='$chunk_file_path'"
-                  echo "DEBUG: Re-validating the input JSON_MATRIX that caused empty output:"
-                  if echo "$JSON_MATRIX" | jq -e . > /dev/null 2>&1; then
-                      echo "DEBUG: Input JSON_MATRIX was still considered VALID by jq -e just before the empty output. This is very strange."
-                  else
-                      echo "DEBUG: Input JSON_MATRIX was considered INVALID by jq -e. This is the likely cause of empty output."
-                  fi
-                  if [ "$JSON_MATRIX" == "" ]; then
-                      echo "DEBUG: JSON_MATRIX was an empty string. Trying to initialize with the current chunk."
-                      TEMP_JSON_MATRIX=$(jq -cn --arg d "$domain" --arg c "$chunk_file_path" '[{domain:$d,chunk:$c}]')
-                      if [ -n "$TEMP_JSON_MATRIX" ]; then
-                          echo "DEBUG: Successfully initialized TEMP_JSON_MATRIX from empty string case."
-                      else
-                          echo "ERROR: Still failed to initialize TEMP_JSON_MATRIX even from empty string case."
-                          continue
-                      fi
-                  else
-                      continue 
-                  fi
-                fi
-
-                JSON_MATRIX="$TEMP_JSON_MATRIX"
-                CHUNK_COUNT_FOR_THIS_FILE=$((CHUNK_COUNT_FOR_THIS_FILE + 1))
-                echo "DEBUG: Successfully added/updated for chunk '$chunk_file_path'. JSON_MATRIX (first 100 chars): $(echo "$JSON_MATRIX" | head -c 100)"
-              done < <(find "chunks/$domain/" -name 'chunk_*' -type f -print)
-
-              if [ "$CHUNK_COUNT_FOR_THIS_FILE" -eq 0 ]; then
-                echo "WARNING: No chunk files were processed/added to matrix for '$file_path' in domain '$domain'. 'split' might have created no files, or 'jq' failed for all."
-              else
-                echo "INFO: Processed and added $CHUNK_COUNT_FOR_THIS_FILE chunk(s) to matrix for domain '$domain' from '$file_path'."
-              fi
-            done
+          
+          domain='subdomains'
+          echo "INFO: Using static domain name: '$domain'"
+          mkdir -p "chunks/$domain"
+          
+          output_chunk_prefix="chunks/$domain/chunk_"
+          echo "INFO: Splitting '$INPUT_FILE' into chunks with prefix '$output_chunk_prefix' (max $LINES_PER_CHUNK lines/chunk)"
+          
+          split -l "$LINES_PER_CHUNK" -a 3 --numeric-suffixes=1 "$INPUT_FILE" "$output_chunk_prefix"
+          if [ $? -ne 0 ]; then
+            # MODIFIED: Changed exit 1 to exit 0 and added a clear error message.
+            echo "::error::'split' command failed. Chunk generation will be skipped. Exiting gracefully."
+            echo "total_chunks=0" >> $GITHUB_OUTPUT
+            echo "full_matrix=[]" >> $GITHUB_OUTPUT
+            exit 0
           fi
-
-          echo "-----------------------------------------------------"
-          if ! echo "$JSON_MATRIX" | jq -e . > /dev/null 2>&1; then
-            echo "ERROR: Final JSON_MATRIX is not valid JSON. Content (first 200 chars): $(echo "$JSON_MATRIX" | head -c 200)"
-            echo "WARNING: Setting JSON_MATRIX to '[]' and total_chunks to 0 due to invalid JSON."
-            JSON_MATRIX="[]"
-            TOTAL_CHUNKS=0
-          else
-            TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
-          fi
-
-          echo "FINAL_BUILD_INFO: Final JSON_MATRIX content (first 200 chars): $(echo "$JSON_MATRIX" | head -c 200)"
-          echo "FINAL_BUILD_INFO: Total chunks in matrix: $TOTAL_CHUNKS"
-
-          echo "INFO: Writing the final matrix to 'full_matrix.json' file..."
-          echo "$JSON_MATRIX" > full_matrix.json
-
-          if [ -f full_matrix.json ]; then
-            echo "VERIFY: 'full_matrix.json' created. Size: $(wc -c < full_matrix.json) bytes."
-            echo "VERIFY: Content preview of 'full_matrix.json' (first 200 chars): $(head -c 200 full_matrix.json)"
-            if jq -e . full_matrix.json > /dev/null 2>&1; then
-              echo "VERIFY: 'full_matrix.json' contains valid JSON."
-            else
-              echo "ERROR: 'full_matrix.json' does NOT contain valid JSON! This will cause issues for 'fromJson' later."
+          
+          CHUNK_COUNT_FOR_THIS_FILE=0
+          # This robust loop is maintained from your reference.
+          while IFS= read -r chunk_file_path; do
+            if [ -z "$chunk_file_path" ]; then continue; fi
+            if ! echo "$JSON_MATRIX" | jq -e . > /dev/null 2>&1; then
+              echo "CRITICAL_ERROR_DETECTED: JSON_MATRIX is INVALID before processing '$chunk_file_path'."
+              break 
             fi
-          else
-            echo "CRITICAL_ERROR: 'full_matrix.json' was NOT created after attempting to write JSON_MATRIX."
-            echo "INFO: Forcing 'full_matrix.json' to be '[]' as a fallback to prevent tar error."
-            echo "[]" > full_matrix.json
-          fi
+            TEMP_JSON_MATRIX=$(printf '%s' "$JSON_MATRIX" | jq -c --arg d "$domain" --arg c "$chunk_file_path" '. + [{domain:$d,chunk:$c}]')
+            if [ $? -ne 0 ] || [ -z "$TEMP_JSON_MATRIX" ]; then
+              echo "ERROR: jq command failed when adding chunk '$chunk_file_path'."
+              continue
+            fi
+            JSON_MATRIX="$TEMP_JSON_MATRIX"
+            CHUNK_COUNT_FOR_THIS_FILE=$((CHUNK_COUNT_FOR_THIS_FILE + 1))
+          done < <(find "chunks/$domain/" -name 'chunk_*' -type f -print)
 
+          echo "INFO: Processed and added $CHUNK_COUNT_FOR_THIS_FILE chunk(s) to matrix."
+          echo "-----------------------------------------------------"
+          
+          if ! echo "$JSON_MATRIX" | jq -e . > /dev/null 2>&1; then
+            echo "::error::Final JSON_MATRIX is not valid JSON. Resetting to empty."
+            JSON_MATRIX="[]"
+          fi
+          
+          TOTAL_CHUNKS=$(echo "$JSON_MATRIX" | jq 'length')
+          echo "FINAL_BUILD_INFO: Total chunks in matrix: $TOTAL_CHUNKS"
+          echo "$JSON_MATRIX" > full_matrix.json
+          
           echo "full_matrix=$JSON_MATRIX" >> $GITHUB_OUTPUT
           echo "total_chunks=$TOTAL_CHUNKS" >> $GITHUB_OUTPUT                 
 
       - name: Package All Chunks and Resolvers      
-        id: package_chunks # This ID is referenced by outputs and later steps
+        id: package_chunks
         if: steps.build_full_matrix.outputs.total_chunks > 0
         shell: bash
         run: |
-          # Define the base name for the artifact (without .tar.gz)
           BASE_ARTIFACT_NAME="all-chunks-package-${{ github.run_id }}"
-          # Define the full tar filename
           PACKAGE_TAR_FILENAME="${BASE_ARTIFACT_NAME}.tar.gz"
 
           echo "INFO: Preparing package '$PACKAGE_TAR_FILENAME'..."
-          # Ensure resolver files and full_matrix.json exist, create fallbacks if not
           if [ ! -f resolvers.txt ]; then echo "WARNING: resolvers.txt not found, creating default." >&2; echo '1.1.1.1' > resolvers.txt; fi
           if [ ! -f resolvers-trusted.txt ]; then echo "WARNING: resolvers-trusted.txt not found, creating empty." >&2; touch resolvers-trusted.txt; fi
           if [ ! -f full_matrix.json ]; then echo "WARNING: full_matrix.json not found, creating empty array JSON file." >&2; echo "[]" > full_matrix.json; fi
           
-          # Create the tarball
           echo "INFO: Creating tarball: $PACKAGE_TAR_FILENAME"
           tar -czvf "$PACKAGE_TAR_FILENAME" chunks resolvers.txt resolvers-trusted.txt full_matrix.json
           
-          if [ $? -eq 0 ]; then
-            echo "INFO: '$PACKAGE_TAR_FILENAME' created successfully."
-          else
-            echo "ERROR: Failed to create tarball '$PACKAGE_TAR_FILENAME'."
-            # Exit or handle error appropriately if tar fails
-            exit 0 
+          if [ $? -ne 0 ]; then
+            # MODIFIED: Changed exit 1 to exit 0. The script will continue, but outputs will not be set.
+            echo "::error::Failed to create tarball '$PACKAGE_TAR_FILENAME'. The upload step will be skipped."
+            exit 0
           fi
           
-          # Output the full .tar.gz filename for the 'path' in upload-artifact
-          
+          echo "INFO: '$PACKAGE_TAR_FILENAME' created successfully."
+          # These outputs are now conditional. They will only be set on success.
           echo "package_tar_filename=$PACKAGE_TAR_FILENAME" >> $GITHUB_OUTPUT
-          
-          # Output the base artifact name (without .tar.gz) for the 'name' in upload-artifact and for job output
-          
           echo "base_artifact_name=$BASE_ARTIFACT_NAME" >> $GITHUB_OUTPUT
 
       - name: Upload Full Chunks Package
-        if: steps.build_full_matrix.outputs.total_chunks > 0 && steps.package_chunks.outcome == 'success'
+        if: steps.build_full_matrix.outputs.total_chunks > 0 && steps.package_chunks.outcome == 'success' && steps.package_chunks.outputs.base_artifact_name != ''
         uses: actions/upload-artifact@v4
         with:
-          # Use the base artifact name output from the 'package_chunks' step
           name: ${{ steps.package_chunks.outputs.base_artifact_name }}
-          # Use the full tar filename output from the 'package_chunks' step
           path: ${{ steps.package_chunks.outputs.package_tar_filename }}
           retention-days: 1
+      
+
 
   distribute_and_trigger_secondary:
     name: Distribute Work & Trigger Secondary
