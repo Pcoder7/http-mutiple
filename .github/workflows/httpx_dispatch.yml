@@ -29,11 +29,6 @@ jobs:
   prepare_all_chunks_and_package:
     name: Prepare All Chunks & Package
     runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/pcoder7/spider-puredns-actions:latest
-      credentials:
-        username: ${{ secrets.GHCR_USER }}
-        password: ${{ secrets.GHCR_TOKEN }}
     outputs:
       # Output 1: The full JSON matrix string of ALL generated chunks
       all_chunks_matrix_json: ${{ steps.build_full_matrix.outputs.full_matrix }}
@@ -43,7 +38,7 @@ jobs:
       chunk_package_artifact_name: "all-chunks-package-${{ github.run_id }}"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Checkout Store Repo to Find Inputs
         uses: actions/checkout@v4
@@ -56,8 +51,8 @@ jobs:
         id: extract_entries
         shell: bash
         run: |
-          echo "INFO: Searching for entries within the 'store-recon-data' directory."
-          cd store-recon-data
+          echo "INFO: Searching for entries within the 'store-recon-' directory."
+          
           CORRELATION_ID="${{ github.event.client_payload.run_id }}"
           if [ -z "$CORRELATION_ID" ]; then
             # MODIFIED: Changed exit 1 to exit 0 and added a clear error message.
