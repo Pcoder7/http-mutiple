@@ -40,6 +40,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug Received Dispatch Payload
+        shell: bash
+        run: |
+          echo "--- DUMPING GITHUB.EVENT CONTEXT ---"
+          echo "This shows the exact payload received by the workflow."
+          echo '${{ toJSON(github.event) }}'
+          echo "------------------------------------"        
+
       - name: Checkout Store Repo to Find Inputs
         uses: actions/checkout@v4
         with:
